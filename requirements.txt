@@ -1,0 +1,31 @@
+# Core scientific computing
+numpy>=1.24.0
+scipy>=1.10.0
+matplotlib>=3.6.0
+
+# Configuration and data handling
+pyyaml>=6.0
+pandas>=2.0.0
+
+# Video processing
+ffmpeg-python>=0.2.0
+
+# Optional advanced mooring libraries
+# Uncomment if needed for advanced features
+# moorpy>=1.0.0
+# moordyn>=2.0.0
+
+# Development dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+
+# Documentation
+sphinx>=6.0.0
+sphinx-rtd-theme>=1.2.0
+
+# Jupyter support (for examples)
+jupyter>=1.0.0
+ipykernel>=6.0.0 
