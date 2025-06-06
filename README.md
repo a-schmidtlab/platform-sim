@@ -1,272 +1,392 @@
-# Epsilon-Sim: Floating Platform Simulation
+# Platform-Sim: Floating Platform Dynamics
 
-A 2D simulation package for analyzing floating platform dynamics with mooring line systems, specifically designed to study line breaking scenarios and their effects on platform motion.
+A 2D simulation exploring how floating platforms behave when mooring lines break. The focus is on understanding what happens when anchor lines fail and how the platform responds.
 
-## Overview
+## Content
 
-This simulation models a semi-ballasted four-column floating platform connected to anchor points via mooring lines. The primary use case is analyzing the platform's response when one or more mooring lines break, calculating:
+1. [The Physics Behind It](#the-physics-behind-it)
+2. [How the Model Works](#how-the-model-works)  
+3. [What the Software Does](#what-the-software-does)
+4. [Getting Started](#getting-started)
+5. [Project Organization](#project-organization)
+6. [Development](#development)
 
-- Platform trajectory (surge, sway, yaw)
-- Tension forces in remaining mooring lines  
-- Timelapse animations of the platform motion
+---
 
-## Features
+## The Physics Behind It
 
-- **3-DOF Platform Dynamics**: Surge, sway, and yaw motion simulation
-- **Mooring Line Physics**: Linear spring model with line breaking capabilities
-- **Timelapse Animation**: High-quality MP4 output with customizable speed
-- **Parameter Configuration**: YAML-based configuration system
-- **Extensible Design**: Modular architecture for adding advanced features
+### Why This Matters
 
-## Installation
+Floating platforms are essential infrastructure for offshore operations - oil rigs, wind farms, research stations. They are ofte brought into position using anchor lines, but sometimes these lines break. Understanding the dynamic ist interesting.
 
-### Prerequisites
-- Python 3.11 or higher
-- FFmpeg (for video generation)
+### Basic Physics Concepts
 
-### Setup
-```bash
-# Clone the repository
-git clone <repository-url>
-cd epsilon-sim
+#### Platform Motion
 
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+Real floating platforms can move in six ways:
+- Slide forward/backward (surge), left/right (sway), up/down (heave)
+- Tilt forward/backward (pitch), left/right (roll), or spin (yaw)
 
-# Install dependencies
-pip install -r requirements.txt
+This simulation focuses on horizontal motions (surge, sway, yaw) since these dominate the response to mooring line failures.
 
-# Install in development mode
-pip install -e .
+The fundamental equation looks like this:
+
+```
+[M + A(ω)] ẍ + [B(ω) + B_linear] ẋ + [C] x = F_external(t)
 ```
 
-## Quick Start
+Where:
+- `[M]` = Platform mass/inertia
+- `[A(ω)]` = Added mass from moving water
+- `[B(ω)]` = Energy lost creating waves
+- `[B_linear]` = Energy lost to friction
+- `[C]` = Restoring forces
+- `F_external(t)` = External forces
 
-### Running Simulations
+#### Mooring Line Physics
 
-#### Basic Python API
+Anchor lines follow catenary curves - how heavy chains hang between points:
+
+```
+Horizontal Tension: TH = constant along line
+Vertical Tension: TV = TH × sinh(s/a)
+Line Shape: y = a × [cosh(x/a) - 1]
+```
+
+Total line tension combines static and dynamic components:
+```
+T_total = T_static + T_dynamic
+```
+
+Lines break due to:
+- Overload (exceeding strength limits)
+- Fatigue (repeated stress cycles)  
+- Wear at connection points
+- Corrosion from seawater
+
+#### Force Buildup Before Breaking
+
+Forces increase before the line breaks at t=8.0s because:
+
+1. Platform oscillates constantly due to waves
+2. Larger movements create more line stretch
+3. More stretch means higher force (Hooke's Law: `F = (EA/L₀) × extension`)
+4. Peak movements can generate 200+ MN forces
+5. When Line 0 breaks, remaining lines redistribute the total load
+
+This represents normal behavior for mooring systems under wave loading.
+
+---
+
+## How the Model Works
+
+### Approach
+
+The simulation uses a "reduced-order model" - simplified but captures essential physics without excessive complexity.
+
+#### Platform Model
+
+Platform treated as rigid body with three motion directions:
+
 ```python
-import epsilon_sim as eps
+# State vector: [x, y, ψ, ẋ, ẏ, ψ̇]
+# Mass matrix [3×3]:
+M = [
+    [m + m_added_surge,              0,           0        ],
+    [     0,           m + m_added_sway,        0        ],  
+    [     0,                 0,      I_zz + I_added_yaw]
+]
 
-# Create simulation with default parameters
-sim = eps.PlatformSimulator()
-
-# Run simulation with line break at t=0
-results = sim.run(break_line=0, duration=120.0)
-
-# Generate timelapse animation
-animator = eps.TimelapseAnimator(results)
-animator.create_video("output/simulation.mp4", speedup=6)
+# Damping matrix [3×3]:
+B = [
+    [b_surge,    0,      0   ],
+    [   0,    b_sway,   0   ],
+    [   0,       0,   b_yaw ]
+]
 ```
 
-#### Command Line Simulations
-```bash
-# Standard simulation with line break at t=0
-python run_simulation.py
+Parameters:
+- Platform Mass: 12.5 million kg
+- Platform Size: 120m × 120m square
+- Added Mass: 15% extra for water motion
+- Damping: Tuned for realistic oscillations
 
-# Dramatic simulation with significant initial displacement
-python run_dramatic_simulation.py
+#### Force Calculation
+
+Real-time force computation for each frame:
+
+```python
+def calculate_line_force(attachment_pos, anchor_pos):
+    # Distance calculation
+    line_vector = attachment_pos - anchor_pos
+    current_length = np.linalg.norm(line_vector)
+    
+    # Line stretch
+    extension = max(0.0, current_length - L0)
+    
+    # Apply Hooke's law
+    force_magnitude = (EA / L0) * extension
+    
+    return force_magnitude
 ```
 
-#### Dynamic Real-time Simulation (NEW!)
-Experience the complete platform dynamics sequence in real-time:
+Line parameters:
+- Unstretched Length: 300m
+- Stiffness: 1.2×10⁹ N (steel chain equivalent)
+- Breaking: Instant failure at set time
+- Layout: Four lines from platform corners to diagonal anchors
+
+#### Time Integration
+
+Adaptive Runge-Kutta integration:
+- Automatic step size adjustment
+- Minimum step: 0.001s for stability
+- Maximum step: 0.01s for dynamics
+- High precision force calculations
+
+### Validation and Limitations
+
+Working correctly:
+- Energy conservation
+- Equilibrium positions
+- Oscillation periods (40-60 seconds)
+- Force magnitudes (0-400+ MN range)
+- Pre-break force physics
+
+Current limitations:
+- 2D motion only (no heave, roll, pitch)
+- Simplified mooring model
+- Basic hydrodynamics
+
+Suitable for:
+- Understanding platform behavior
+- Single line failure studies
+- Physics exploration
+- Parameter studies
+
+Not suitable for:
+- Engineering design validation
+- Multiple line failures
+- Extreme weather analysis
+
+---
+
+## What the Software Does
+
+### Main Simulation
+
+Run the interactive simulation:
 
 ```bash
-# Run dynamic simulation with visual break sequence
 python run_dynamic_simulation.py
 ```
 
-**Dynamic Simulation Features:**
-- **Visual Platform**: Platform displayed as rotatable square (120m x 120m)
-- **Break Timeline**: Pre-break equilibrium → line failure event → oscillating response  
-- **Real-time Data**: Live force bars, position tracking, and energy visualization
-- **Interactive Controls**: Play/Pause, Reset, Speed adjustment (0.1x to 10x)
-- **Automatic Looping**: Continuous replay of the complete sequence
-- **Realistic Physics**: Shows characteristic oscillating turning motion after line break
+Interface features:
+- Professional display showing "Floating Platform Dynamic Analysis: 120m×120m Semi-Ballasted Structure | 4-Line Diagonal Mooring System | Line Break Response at t=8.0s"
+- Real-time force monitoring with color coding:
+  - Normal operation (under 50 MN): standard colors
+  - Overload condition (50-100 MN): bright colors  
+  - Critical loading (over 100 MN): dark colors
+  - Broken line: gray (0.00 MN)
+- Auto-scaling plots handling 0-400+ MN forces
+- Reference lines for working loads and breaking points
 
-**What You'll See:**
-1. **t = 0-5s**: Platform in slight offset equilibrium with all lines tensioned
-2. **t = 5s**: Line 0 breaks (dramatic visual change from red to gray dashed line)
-3. **t = 5-60s**: Platform exhibits realistic oscillating drift with rotation
-4. **Data Plots**: Real-time force redistribution, position tracking, energy evolution
+Simulation sequence:
+1. First 8 seconds: Normal oscillation, forces 80-200 MN
+2. t=8.0s: Line 0 breaks (turns gray)
+3. After t=8s: Platform drifts, remaining lines carry 140-362+ MN
+4. Position tracking: surge (30-80m), sway (20-40m), rotation
 
-## Project Structure
+Controls:
+- Speed slider (0.1x to 5.0x)
+- Play/pause
+- Reset
+
+### Programmatic Use
+
+Python API:
+
+```python
+import epsilon_sim as eps
+import numpy as np
+
+# Setup
+sim = eps.PlatformSimulator()
+sim.set_line_break(line_id=0, break_time=8.0)
+
+# Run
+results = sim.run(duration=120.0, max_step=0.01)
+
+# Analysis
+max_force = np.max(results.line_forces) / 1e6  # Convert to MN
+max_displacement = np.max(np.sqrt(results.x**2 + results.y**2))
+print(f"Maximum line force: {max_force:.1f} MN")
+print(f"Maximum displacement: {max_displacement:.1f} m")
+```
+
+### Configuration
+
+Parameters in YAML files:
+
+```yaml
+platform:
+  mass: 1.25e7                 # kg - Total mass
+  length: 120.0                # m - Dimensions
+  width: 120.0                 # m
+  inertia_z: 8.0e9            # kg⋅m² - Rotational inertia
+
+mooring:
+  num_lines: 4                 # Four-point mooring
+  length: 300.0                # m - Line length
+  stiffness: 1.2e9            # N - Line stiffness
+  anchor_positions:           # Anchor locations
+    - [280, 280]              # Northeast
+    - [-280, 280]             # Northwest
+    - [-280, -280]            # Southwest  
+    - [280, -280]             # Southeast
+
+simulation:
+  break_time: 8.0             # Line failure time
+  duration: 120.0             # Simulation length
+```
+
+---
+
+## Getting Started
+
+### Requirements
+- Python 3.11 or newer
+- FFmpeg (for videos, optional)
+- Linux, macOS, or Windows
+
+### Setup
+```bash
+git clone https://github.com/a-schmidtlab/platform-sim.git
+cd epsilon-sim
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Running
+```bash
+# Interactive simulation
+python run_dynamic_simulation.py
+
+# Batch run
+python run_simulation.py
+```
+
+### Expected Results
+- Platform movement: 30-80m surge, 20-40m sway after line break
+- Line forces: 0-400+ MN showing offshore loading
+- Natural period: 40-60 seconds
+- Computation time: 5-15 seconds for 120-second simulation
+
+---
+
+## Project Organization
 
 ```
 epsilon-sim/
-├── src/epsilon_sim/           # Main source code
-│   ├── core/                  # Core simulation components
-│   │   ├── simulator.py       # Main simulation engine
-│   │   ├── platform.py        # Platform dynamics model
-│   │   └── state.py           # State management
-│   ├── physics/               # Physics models
-│   │   ├── mooring.py         # Mooring line dynamics
-│   │   ├── forces.py          # Force calculations
-│   │   └── integration.py     # Numerical integration
-│   ├── visualization/         # Visualization and animation
-│   │   ├── animator.py        # Animation generation
-│   │   ├── plotter.py         # Data visualization
-│   │   └── renderer.py        # Real-time rendering
-│   └── utils/                 # Utility functions
-│       ├── config.py          # Configuration management
-│       ├── validation.py      # Input validation
-│       └── io.py              # File I/O operations
-├── tests/                     # Test suite
-│   ├── unit/                  # Unit tests
-│   └── integration/           # Integration tests
-├── config/                    # Configuration files
-│   ├── default.yaml           # Default parameters
-│   └── scenarios/             # Predefined scenarios
-├── examples/                  # Example scripts and notebooks
-├── docs/                      # Documentation
-├── scripts/                   # Utility scripts
-├── output/                    # Generated outputs
-└── data/                      # Input data files
+├── src/epsilon_sim/           # Main code
+│   ├── core/                  # Platform physics
+│   ├── physics/               # Force models
+│   ├── visualization/         # Graphics and animation  
+│   └── utils/                 # Configuration tools
+├── scripts/                   # Runnable programs
+│   ├── run_dynamic_simulation.py    # Main interface
+│   ├── run_simulation.py            # Basic version
+│   └── run_dramatic_simulation.py   # Extreme conditions
+├── config/                    # Parameter files
+├── tests/                     # Testing code
+└── examples/                  # Learning examples
 ```
 
-## Physics Model and Assumptions
-
-The simulation implements a 3-DOF (surge, sway, yaw) model of a floating platform with enhanced hydrodynamics:
-
-### Platform Model
-- **Geometry**: Semi-ballasted square platform (120m × 120m, 1.25×10⁷ kg)
-- **Degrees of Freedom**: Surge (x), Sway (y), Yaw (ψ) motion only
-- **Added Mass**: 15% of platform mass for surge/sway, 10% for yaw inertia
-- **Coordinate System**: Global frame with origin at initial anchor center
-
-### Mooring System  
-- **Configuration**: 4 catenary lines connecting platform corners to seabed anchors
-- **Line Properties**: 400m unstretched length, 1.2×10⁹ N axial stiffness
-- **Force Model**: Linear elastic (Hooke's law) with geometric nonlinearity
-- **Breaking Model**: Instantaneous complete failure at specified time
-- **Anchor Positions**: Fixed at (±60m, ±60m) on seabed
-
-### Hydrodynamic Effects
-- **Linear Damping**: Velocity-proportional resistance (8×10⁵ N·s/m)
-- **Quadratic Damping**: Velocity-squared drag effects (reduced coefficient)
-- **Wave Forces**: Multi-frequency sinusoidal excitation forces
-- **Memory Effects**: Simplified radiation damping for fluid-structure interaction
-- **Hydrostatic Restoring**: Yaw restoring moment only (2.5×10⁸ N·m/rad)
-
-### Key Assumptions and Limitations
-
-#### Simplifications Made:
-1. **2D Motion**: No heave, roll, or pitch degrees of freedom
-2. **Shallow Water**: No wave-frequency dependent effects
-3. **Linear Mooring**: Catenary effects approximated by geometric constraints
-4. **Rigid Body**: Platform treated as single rigid body
-5. **Instantaneous Breaking**: No gradual line degradation or cascading failures
-6. **Fixed Anchors**: No anchor dragging or pullout
-7. **Calm Weather**: No wind loads or current effects included
-
-#### Physical Validity:
-- **Natural Periods**: Platform oscillations ~40-60 seconds (typical for semi-submersibles)
-- **Damping Ratios**: Approximately 5-10% critical damping for sustained oscillations
-- **Force Magnitudes**: Wave forces up to 8 MN (realistic for extreme conditions)
-- **Displacement Range**: Platform can drift 100+ meters after line failure
-- **Speed Range**: Transient speeds up to 3-5 m/s during failure response
-
-#### Validation Status:
-- **Energy Conservation**: Verified for conservative forces
-- **Equilibrium**: Static equilibrium validated for intact system
-- **Stability**: Integration stability maintained with adaptive time stepping
-- **Oscillation Characteristics**: Match literature values for floating platforms
-
-#### Known Limitations:
-1. **No 6-DOF Coupling**: Missing roll-pitch-heave interactions
-2. **No Environmental Loading**: No waves, wind, or current
-3. **Simplified Damping**: Real viscous effects more complex
-4. **No Line Dynamics**: Chain/cable dynamics neglected
-5. **No Seabed Interaction**: No anchor-soil mechanics
-6. **No Multiple Failures**: Only single line break scenarios
-
-### Recommended Use Cases:
-- Preliminary design studies of mooring configurations
-- Investigation of platform response to single line failures  
-- Educational demonstration of floating platform dynamics
-- Basis for more detailed analysis with specialized software
-
-### Not Suitable For:
-- Final design validation (use AQWA, OrcaFlex, etc.)
-- Multi-failure cascade analysis
-- Extreme weather condition assessment
-- Detailed fatigue or ultimate strength analysis
-
-## Configuration
-
-The simulation uses YAML configuration files for parameters:
-
-```yaml
-# config/default.yaml
-platform:
-  mass: 1.25e7                 # kg, total mass (semi-ballasted)
-  length: 120.0                # m, platform length
-  width: 120.0                 # m, platform width  
-  inertia_z: 8.0e9            # kg⋅m², yaw moment of inertia
-
-mooring:
-  num_lines: 4
-  length: 400.0                # m, unstretched length
-  stiffness: 1.2e9            # N, axial stiffness EA
-  anchor_positions:           # m, [x, y] coordinates
-    - [60, 60]
-    - [-60, 60] 
-    - [-60, -60]
-    - [60, -60]
-
-damping:
-  linear_coeff: 3.5e6         # N⋅s/m, linear damping
-  angular_coeff: 1.75e8       # N⋅m⋅s/rad, angular damping
-
-simulation:
-  duration: 120.0             # s, total simulation time
-  max_timestep: 0.25          # s, maximum integration timestep
-  tolerance: 1e-6             # Integration tolerance
-```
-
-## Examples
-
-See the `examples/` directory for:
-- Basic simulation example
-- Parameter sensitivity analysis
-- Advanced visualization techniques
-- Batch simulation scripts
+---
 
 ## Development
 
-### Running Tests
+### Contributing
 ```bash
-pytest tests/
-```
-
-### Code Quality
-```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
 black src/ tests/
-flake8 src/ tests/
-mypy src/
 ```
 
-### Building Documentation
-```bash
-cd docs/
-make html
-```
+### Extension Ideas
+- Add full 6-DOF motion (heave, roll, pitch)
+- Include wind and current effects
+- Model fatigue and gradual failure
+- Multiple line break scenarios
+
+---
+
+## Technical Sources and Further Reading
+
+### Academic References
+
+**Floating Platform Dynamics:**
+- Faltinsen, O.M. (1990). "Sea Loads on Ships and Offshore Structures". Cambridge University Press.
+- Newman, J.N. (1977). "Marine Hydrodynamics". MIT Press.
+- Chakrabarti, S.K. (2005). "Handbook of Offshore Engineering". Elsevier.
+
+**Mooring System Analysis:**
+- API RP 2SK (2005). "Design and Analysis of Stationkeeping Systems for Floating Structures". American Petroleum Institute.
+- DNV-OS-E301 (2013). "Position Mooring". Det Norske Veritas.
+- Vryhof Anchors (2010). "Anchor Manual - The Guide to Anchoring". Vryhof Anchors BV.
+
+**Numerical Methods:**
+- Cummins, W.E. (1962). "The Impulse Response Function and Ship Motions". DTMB Report 1661.
+- Ogilvie, T.F. (1964). "Recent Progress Toward the Understanding and Prediction of Ship Motions". 5th ONR Symposium on Naval Hydrodynamics.
+
+### Industry Standards
+
+**Design Codes:**
+- API RP 2FPS: "Planning, Designing and Constructing Floating Production Systems"
+- ISO 19901-7: "Petroleum and Natural Gas Industries - Stationkeeping Systems for Floating Offshore Petroleum and Gas Structures"
+- ABS Guide for Position Mooring Systems
+
+**Classification Societies:**
+- DNV GL: Rules for Classification of Ships and Offshore Units
+- ABS: Rules for Building and Classing Mobile Offshore Drilling Units
+- Lloyd's Register: Rules and Regulations for the Classification of Mobile Offshore Units
+
+### Professional Software
+
+**Commercial Mooring Analysis:**
+- OrcaFlex (Orcina): Time-domain dynamic analysis
+- AQWA (ANSYS): Frequency and time-domain analysis
+- WAMIT: Wave analysis for floating bodies
+- MoorDyn: Open-source mooring dynamics
+
+**Platform Motion Analysis:**
+- SESAM (DNV GL): Complete offshore analysis suite
+- MOSES (Bentley): Multi-purpose offshore analysis
+- FAST (NREL): Wind turbine simulation including floating platforms
+
+### Open Source Tools
+
+**Analysis Software:**
+- OpenFOAM: Computational fluid dynamics
+- Code_Aster: Finite element analysis
+- FEniCS: Partial differential equation solving
+- NumPy/SciPy: Scientific computing in Python
+
+**Data and Validation:**
+- NDBC (National Data Buoy Center): Real ocean measurement data
+- ECMWF: Global weather and wave data
+- JONSWAP spectrum: Standard wave spectra for analysis
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+Open source project released under MIT License.
 
-## Contributing
+---
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
-## Acknowledgments
 
-- Based on offshore platform dynamics principles
-- Inspired by MoorDyn and MoorPy mooring analysis tools
-- FFmpeg for video encoding capabilities 
+Greetings, Axel Schmidt
