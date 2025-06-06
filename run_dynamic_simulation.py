@@ -141,16 +141,6 @@ class DynamicPlatformSimulator:
         
         print(f"  Detected oscillations - Surge: {surge_oscillations}, Sway: {sway_oscillations}, Yaw: {yaw_oscillations}")
         
-        # Debug: Check what attributes the results have
-        print(f"  Results attributes: {[attr for attr in dir(self.results) if not attr.startswith('_')]}")
-        if hasattr(self.results, 'line_forces') and self.results.line_forces is not None:
-            try:
-                forces_array = np.array(self.results.line_forces)
-                print(f"  Line forces shape: {forces_array.shape}")
-                print(f"  First few force values: {forces_array[:3] if len(forces_array) > 0 else 'Empty'}")
-            except Exception as e:
-                print(f"  Line forces format issue: {e}")
-        
         # Setup display parameters 
         self.frame_skip = max(1, len(self.results.time) // 2000)  # Limit to ~2000 frames
         print(f"  Frame skip: {self.frame_skip} (total frames: {len(self.results.time) // self.frame_skip})")
@@ -179,65 +169,61 @@ class DynamicPlatformSimulator:
         # Each full oscillation has 2 zero crossings
         return zero_crossings // 2
     
-    def get_current_forces(self, current_time: float):
-        """Get current line forces from the simulator in MN."""
+    def _calculate_current_forces(self, frame_idx: int, current_time: float):
+        """Calculate mooring line forces at current platform state in MN."""
         try:
-            # Find the time index closest to current_time
-            if hasattr(self.results, 'time') and len(self.results.time) > 0:
-                time_idx = np.argmin(np.abs(self.results.time - current_time))
-                
-                # Get current platform state
-                x = self.results.x[time_idx]
-                y = self.results.y[time_idx] 
-                psi = self.results.psi[time_idx]
-                
-                # Calculate force for each mooring line
-                forces_MN = []
-                platform_size = 60.0
-                
-                # Platform attachment points (corners)
-                attachments_body = np.array([
-                    [platform_size, platform_size],    # Line 0 - Top-right corner
-                    [-platform_size, platform_size],   # Line 1 - Top-left corner
-                    [-platform_size, -platform_size],  # Line 2 - Bottom-left corner
-                    [platform_size, -platform_size]    # Line 3 - Bottom-right corner
-                ])
-                
-                # Transform attachment points to global frame
-                cos_psi, sin_psi = np.cos(psi), np.sin(psi)
-                R = np.array([[cos_psi, -sin_psi], [sin_psi, cos_psi]])
-                attachments_global = (R @ attachments_body.T).T + np.array([x, y])
-                
-                # Calculate force for each line
-                EA_per_L0 = 1.2e9 / 300.0  # Stiffness per unit length
-                
-                for i in range(4):
-                    if i == 0 and current_time >= self.break_time:
-                        # Line 0 is broken
-                        forces_MN.append(0.0)
-                    else:
-                        # Calculate line force using Hooke's law
-                        attach_pos = attachments_global[i]
-                        anchor_pos = self.anchor_positions[i]
-                        
-                        # Line vector and length
-                        line_vec = attach_pos - anchor_pos
-                        line_length = np.linalg.norm(line_vec)
-                        L0 = 300.0  # Unstretched length
-                        
-                        # Extension and force
-                        extension = max(0.0, line_length - L0)
-                        force_magnitude = EA_per_L0 * extension
-                        
-                        # Convert to MN
-                        forces_MN.append(force_magnitude / 1e6)
-                
-                return forces_MN
+            # Get current platform state
+            x = self.results.x[frame_idx]
+            y = self.results.y[frame_idx] 
+            psi = self.results.psi[frame_idx]
             
-            return [0.0, 0.0, 0.0, 0.0]
-                
+            # Platform attachment points in body frame (corners)
+            platform_size = 60.0
+            attachments_body = np.array([
+                [platform_size, platform_size],    # Line 0 - NE corner
+                [-platform_size, platform_size],   # Line 1 - NW corner  
+                [-platform_size, -platform_size],  # Line 2 - SW corner
+                [platform_size, -platform_size]    # Line 3 - SE corner
+            ])
+            
+            # Transform to global frame
+            cos_psi, sin_psi = np.cos(psi), np.sin(psi)
+            R = np.array([[cos_psi, -sin_psi], [sin_psi, cos_psi]])
+            attachments_global = (R @ attachments_body.T).T + np.array([x, y])
+            
+            # Mooring line parameters
+            L0 = 300.0  # Unstretched length [m]
+            EA = 1.2e9  # Axial stiffness [N]
+            
+            forces_MN = []
+            
+            # Calculate force for each line
+            for i in range(4):
+                if i == 0 and current_time >= self.break_time:
+                    # Line 0 is broken after break time
+                    forces_MN.append(0.0)
+                else:
+                    # Get attachment and anchor positions
+                    attach_pos = attachments_global[i]
+                    anchor_pos = self.anchor_positions[i]
+                    
+                    # Calculate line vector and current length
+                    line_vec = attach_pos - anchor_pos
+                    current_length = np.linalg.norm(line_vec)
+                    
+                    # Calculate extension (strain)
+                    extension = max(0.0, current_length - L0)
+                    
+                    # Calculate force using Hooke's law: F = (EA/L0) * extension
+                    force_N = (EA / L0) * extension
+                    force_MN = force_N / 1e6
+                    
+                    forces_MN.append(force_MN)
+            
+            return forces_MN
+            
         except Exception as e:
-            print(f"Warning: Could not get current forces: {e}")
+            print(f"Error calculating forces: {e}")
             return [0.0, 0.0, 0.0, 0.0]
     
     def create_dynamic_visualization(self):
@@ -246,8 +232,8 @@ class DynamicPlatformSimulator:
         
         # Create figure with improved layout
         self.fig = plt.figure(figsize=(16, 10))
-        self.fig.suptitle('Enhanced Platform Simulation - Realistic Oscillating Motion Analysis', 
-                         fontsize=14, fontweight='bold')
+        self.fig.suptitle('Floating Platform Dynamic Analysis: 120m×120m Semi-Ballasted Structure | 4-Line Diagonal Mooring System | Line Break Response at t=8.0s', 
+                         fontsize=13, fontweight='bold')
         
         # Main platform view (larger, better positioned)
         self.ax_main = plt.subplot2grid((2, 3), (0, 0), colspan=2, rowspan=2)
@@ -377,11 +363,11 @@ class DynamicPlatformSimulator:
             self.force_lines.append(line)
         
         # Add working load and ultimate strength reference lines
-        working_load = 8.0  # 8 MN working load limit
-        ultimate_strength = 12.0  # 12 MN ultimate strength
+        working_load = 50.0  # 50 MN working load limit (adjusted for high-force scenario)
+        ultimate_strength = 100.0  # 100 MN ultimate strength (adjusted for high-force scenario)
         
-        self.ax_force.axhline(y=working_load, color='orange', linestyle='--', alpha=0.7, label='Working Load (8 MN)')
-        self.ax_force.axhline(y=ultimate_strength, color='red', linestyle='-', alpha=0.7, label='Ultimate Strength (12 MN)')
+        self.ax_force.axhline(y=working_load, color='orange', linestyle='--', alpha=0.7, label='Working Load (50 MN)')
+        self.ax_force.axhline(y=ultimate_strength, color='red', linestyle='-', alpha=0.7, label='Ultimate Strength (100 MN)')
         self.ax_force.legend(loc='upper right', fontsize=8)
         
         self.ax_force.set_xlim(0, self.total_duration)
@@ -607,38 +593,16 @@ class DynamicPlatformSimulator:
         self.position_history['y'].append(self.results.y[frame_idx])
         self.position_history['psi'].append(np.degrees(self.results.psi[frame_idx]))
         
-        # Force data - get current forces from simulation results
-        # frame_idx is already the correct simulation time index
-        if hasattr(self.results, 'line_forces') and frame_idx < len(self.results.line_forces):
-            forces_N = self.results.line_forces[frame_idx]
-            forces_MN = forces_N / 1e6
-            # Debug
-            if len(self.time_history) % 100 == 0:
-                print(f"Frame {frame_idx}/{len(self.results.line_forces)}: Raw forces = {forces_N}, MN = {[f'{f:.2f}' for f in forces_MN]}")
-        else:
-            # Fallback: calculate forces at current state
-            forces_MN = self.get_current_forces(current_time)
-            # Debug
-            if len(self.time_history) % 100 == 0:
-                print(f"Frame {frame_idx} out of bounds, using calculated forces: {[f'{f:.2f}' for f in forces_MN]}")
+        # Calculate forces in real-time from current platform state
+        forces_MN = self._calculate_current_forces(frame_idx, current_time)
         
-        # Apply line break logic: Line 0 force should be 0 after break
-        if current_time >= self.break_time:
-            forces_MN[0] = 0.0  # Line 0 broken, force = 0
-        
-        # Ensure we have exactly 4 force values
-        forces_MN = list(forces_MN)
-        while len(forces_MN) < 4:
-            forces_MN.append(0.0)
-        
-        # Store force history - explicitly handle each line
+        # Store force history
         for i in range(4):
-            force_value = forces_MN[i] if i < len(forces_MN) else 0.0
-            self.force_history[f'line{i}'].append(force_value)
+            self.force_history[f'line{i}'].append(forces_MN[i])
         
-        # Debug output (only occasionally)
-        if len(self.time_history) % 100 == 0:  # Every 100 frames
-            print(f"t={current_time:.1f}s: Forces = {[f'{f:.2f}' for f in forces_MN]}")
+        # Debug output occasionally
+        if len(self.time_history) % 50 == 1:  # Every 50 frames
+            print(f"t={current_time:.1f}s: Forces = {[f'{f:.2f}' for f in forces_MN]} MN")
         
         # Limit data buffer size
         buffer_size = 500
@@ -651,8 +615,12 @@ class DynamicPlatformSimulator:
         
         # Update live force lines
         time_data = np.array(self.time_history)
-        working_load = 8.0  # MN
-        ultimate_strength = 12.0  # MN
+        working_load = 50.0  # MN - Adjusted for this high-force scenario
+        ultimate_strength = 100.0  # MN - Adjusted for this high-force scenario
+        
+        # Define base colors for each line
+        base_colors = ['red', 'blue', 'green', 'purple']
+        line_names = ['Line 0 (Broken)', 'Line 1', 'Line 2', 'Line 3']
         
         for i, line in enumerate(self.force_lines):
             # Get force data for this line
@@ -664,37 +632,44 @@ class DynamicPlatformSimulator:
                 if min_length > 0:
                     line.set_data(time_data[-min_length:], force_data[-min_length:])
                 
-                # Update line appearance based on current force
+                # Get current force for this line
                 current_force = forces_MN[i] if i < len(forces_MN) else 0.0
                 
-                if i == 0 and current_time >= self.break_time:
-                    # Broken line - make it gray and dashed, force should be 0
+                # Apply color and style based on line status
+                if i == 0:
+                    # Line 0 is always broken (force = 0)
                     line.set_color('gray')
-                    line.set_alpha(0.5)
+                    line.set_alpha(0.6)
                     line.set_linestyle('--')
                     line.set_linewidth(2)
+                    line.set_label('Line 0 (Broken)')
                 elif current_force > ultimate_strength:
-                    # Critical overload - thick red line
-                    line.set_color('darkred')
+                    # Critical overload - use darkened base color + thick line
+                    critical_colors = ['darkred', 'darkblue', 'darkgreen', 'purple']
+                    line.set_color(critical_colors[i])
                     line.set_alpha(1.0)
-                    line.set_linewidth(3)
+                    line.set_linewidth(4)
                     line.set_linestyle('-')
+                    line.set_label(f'Line {i} (CRITICAL: {current_force:.1f} MN)')
                 elif current_force > working_load:
-                    # Overloaded - thick orange line
-                    line.set_color('darkorange')  
+                    # Overloaded - use bright base color + medium thick line  
+                    overload_colors = ['red', 'cyan', 'lime', 'magenta']
+                    line.set_color(overload_colors[i])
                     line.set_alpha(0.9)
                     line.set_linewidth(3)
                     line.set_linestyle('-')
+                    line.set_label(f'Line {i} (OVERLOAD: {current_force:.1f} MN)')
                 else:
-                    # Normal operation - restore original colors
-                    line_colors = ['red', 'blue', 'green', 'purple']
-                    line.set_color(line_colors[i])
+                    # Normal operation - original color
+                    line.set_color(base_colors[i])
                     line.set_alpha(0.9)
                     line.set_linewidth(2)
                     line.set_linestyle('-')
+                    line.set_label(f'Line {i} ({current_force:.1f} MN)')
             else:
                 # No data yet, hide line
                 line.set_data([], [])
+                line.set_label(f'Line {i} (No Data)')
         
         # Update position tracking (reuse time_data from above)
         self.position_lines[0].set_data(time_data, self.position_history['x'])
@@ -711,6 +686,10 @@ class DynamicPlatformSimulator:
             if len(self.force_history['line0']) > 0:
                 max_force = max([max(self.force_history[f'line{i}']) for i in range(4) if self.force_history[f'line{i}']])
                 self.ax_force.set_ylim(0, max(15, max_force * 1.1))
+        
+        # Update force plot legend to show current values
+        if len(time_data) > 1:
+            self.ax_force.legend(loc='upper right', fontsize=8, framealpha=0.9)
         
         # Mark break time on both plots
         if current_time >= self.break_time and len(time_data) > 1:
@@ -758,9 +737,10 @@ class DynamicPlatformSimulator:
     
     def run(self):
         """Run the complete dynamic simulation."""
-        print("\n" + "="*60)
-        print("DYNAMIC PLATFORM SIMULATION - Real-time Visualization")
-        print("="*60)
+        print("\n" + "="*80)
+        print("FLOATING PLATFORM DYNAMIC ANALYSIS - Marine Engineering Simulation")
+        print("120m×120m Semi-Ballasted Structure | 4-Line Diagonal Mooring | Line Break Analysis")
+        print("="*80)
         
         try:
             # Setup simulation
