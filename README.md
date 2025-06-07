@@ -1,6 +1,6 @@
 # Platform-Sim: Floating Platform Dynamics
 
-A 2D simulation exploring how floating platforms behave when mooring lines break. The focus is on understanding what happens when anchor lines fail and how the platform responds.
+The 2D simulation exploring how floating platforms behave when mooring lines break. The focus is on understanding what happens when anchor lines fail and how the platform responds.
 
 ## Content
 
@@ -17,7 +17,7 @@ A 2D simulation exploring how floating platforms behave when mooring lines break
 
 ### Why This Matters
 
-Floating platforms are essential infrastructure for offshore operations - oil rigs, wind farms, research stations. They are ofte brought into position using anchor lines, but sometimes these lines break. Understanding the dynamic ist interesting.
+Floating platforms are essential infrastructure for offshore operations. They are ofte brought into position using anchor lines, but sometimes these lines break. Understanding the dynamic ist interesting.
 
 ### Basic Physics Concepts
 
@@ -92,16 +92,16 @@ Platform treated as rigid body with three motion directions:
 # State vector: [x, y, ψ, ẋ, ẏ, ψ̇]
 # Mass matrix [3×3]:
 M = [
-    [m + m_added_surge,              0,           0        ],
-    [     0,           m + m_added_sway,        0        ],  
-    [     0,                 0,      I_zz + I_added_yaw]
+    [m + m_added_surge,              0,                      0        ],
+    [     0,                 m + m_added_sway,               0        ],  
+    [     0,                         0,             I_zz + I_added_yaw]
 ]
 
 # Damping matrix [3×3]:
 B = [
-    [b_surge,    0,      0   ],
-    [   0,    b_sway,   0   ],
-    [   0,       0,   b_yaw ]
+    [b_surge,    0,       0   ],
+    [   0,    b_sway,     0   ],
+    [   0,       0,     b_yaw ]
 ]
 ```
 
@@ -182,7 +182,7 @@ python run_dynamic_simulation.py
 ```
 
 Interface features:
-- Professional display showing "Floating Platform Dynamic Analysis: 120m×120m Semi-Ballasted Structure | 4-Line Diagonal Mooring System | Line Break Response at t=8.0s"
+- The isplay showing "Floating Platform Dynamic Analysis: 120m×120m Semi-Ballasted Structure | 4-Line Diagonal Mooring System | Line Break Response at t=8.0s"
 - Real-time force monitoring with color coding:
   - Normal operation (under 50 MN): standard colors
   - Overload condition (50-100 MN): bright colors  
@@ -233,17 +233,17 @@ platform:
   mass: 1.25e7                 # kg - Total mass
   length: 120.0                # m - Dimensions
   width: 120.0                 # m
-  inertia_z: 8.0e9            # kg⋅m² - Rotational inertia
+  inertia_z: 8.0e9             # kg⋅m² - Rotational inertia
 
 mooring:
   num_lines: 4                 # Four-point mooring
   length: 300.0                # m - Line length
-  stiffness: 1.2e9            # N - Line stiffness
-  anchor_positions:           # Anchor locations
-    - [280, 280]              # Northeast
-    - [-280, 280]             # Northwest
-    - [-280, -280]            # Southwest  
-    - [280, -280]             # Southeast
+  stiffness: 1.2e9             # N - Line stiffness
+  anchor_positions:            # Anchor locations
+    - [280, 280]               # Northeast
+    - [-280, 280]              # Northwest
+    - [-280, -280]             # Southwest  
+    - [280, -280]              # Southeast
 
 simulation:
   break_time: 8.0             # Line failure time
@@ -379,14 +379,13 @@ black src/ tests/
 - ECMWF: Global weather and wave data
 - JONSWAP spectrum: Standard wave spectra for analysis
 
----
+.
+
 
 ## License
 
 Open source project released under MIT License.
 
----
+Author: Axel Schmidt in June 2025
 
 
-
-Greetings, Axel Schmidt
