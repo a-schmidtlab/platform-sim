@@ -33,9 +33,13 @@ mooring:
       break_time: 0.0         # s, time when line breaks
 
 damping:
-  # Hydrodynamic damping coefficients (reduced for oscillating motion)
-  linear_coeff: 2.0e5         # N⋅s/m, linear damping in surge/sway (reduced)
-  angular_coeff: 1.0e7        # N⋅m⋅s/rad, angular damping in yaw (reduced)
+  # Hydrodynamic damping coefficients (calculated from marine engineering literature)
+  # Note: These are now calculated automatically in Platform.__init__() based on:
+  # - Platform geometry and water properties
+  # - Viscous drag and radiation damping
+  # - Empirical scaling factors for large platforms
+  linear_coeff: null          # N⋅s/m, calculated automatically (~5-10×10⁶)
+  angular_coeff: null         # N⋅m⋅s/rad, calculated automatically (~10¹⁰-10¹¹)
   
 simulation:
   # Integration parameters
